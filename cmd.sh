@@ -40,11 +40,12 @@ TCP_LOAD_BALANCER_IPV6_NAME="$SETUP_NAME-tcp-lb-ipv6"
 FS_SERVER_HOSTING_FOLDER="/mnt/hosting"
 PUBSUB_TOPIC="$SETUP_NAME-topic-cron"
 PUBSUB_SUBSCRIPTION="$SETUP_NAME-subscription-cron"
-SETUP_DOMAIN="scorpion.developmentpath.co.uk"
+SETUP_DOMAIN="<domain.com>"
+SETUP_DOMAIN_FOLDER="<domain.com>/scorpion"
 PUBSUB_RECEIVER_URL="cron-app/pubsub"
 PUBSUB_PUSH_URL="https://$SETUP_DOMAIN/$PUBSUB_RECEIVER_URL/receive_message"
 
-
+PHP_VERSION="7.2"
 
 IFS='' read -r -d '' PUBSUB_SETUP_CMD <<-EOF
 	mkdir -p $FS_SERVER_HOSTING_FOLDER/$SETUP_DOMAIN/$PUBSUB_RECEIVER_URL
@@ -56,7 +57,7 @@ IFS='' read -r -d '' PUBSUB_SETUP_CMD <<-EOF
 	mkdir -p $FS_SERVER_HOSTING_FOLDER/$SETUP_DOMAIN/cron-app/cron-job-runner
 	cd $FS_SERVER_HOSTING_FOLDER/$SETUP_DOMAIN/cron-app/cron-job-runner
 	git clone https://github.com/scriptburn/cron-job-runner.git .
-	
+
 EOF
 
  IFS='' read -r -d '' VM_TEMPLATE_STARTUP_SCRIPT <<-EOF
@@ -89,7 +90,7 @@ EOF
 
     sudo mv /etc/apache2 /etc/apache2.bak && sudo ln -s /mnt/etc/apache2 /etc/apache2
 
-    phpv="7.2"
+    phpv="$PHP_VERSION"
     sudo apt  -y  install php\$phpv php\$phpv-mbstring  php\$phpv-gd php\$phpv-gettext php\$phpv-curl  php\$phpv-bcmath php\$phpv-xdebug composer git-flow certbot python-certbot-apache php\$phpv-zip php\$phpv-memcache php\$phpv-apcu redis-server php\$phpv-redis php\$phpv-mysql libapache2-mod-php\$phpv php\$phpv-xml && echo "php installed \$phpv"
 
     sudo update-alternatives --set php /usr/bin/php\$phpv
@@ -588,4 +589,52 @@ function template_for_image
 }
 
 
- 
+## steup cert auto renew on fs vm as we can not run command as sudo from our pubsub cron initiator
+## login to any vm
+
+
+
+
+
+IFS='' read -r -d '' SETUP_CERBOT_ON_FS <<-EOF
+
+	export DEBIAN_FRONTEND=noninteractive
+
+
+
+
+    echo "updated-1"
+
+
+    sudo apt install -y apt-transport-https lsb-release ca-certificates && sudo wget -O /etc/apt/trusted.gpg.d/php.gpg https://packages.sury.org/php/apt.gpg && sudo sh -c 'echo "deb https://packages.sury.org/php/ stretch main" > /etc/apt/sources.list.d/php.list' && echo "php 7.2 repo added"
+
+
+ 	sudo apt-get update -y && echo "updated-2"
+    sudo apt-get upgrade -yq && echo "upgrade-1"
+
+	sudo  apt -y install apache2 certbot python-certbot-apache -t stretch-backports
+
+    #sudo mv /etc/apache2 /etc/apache2.bak && sudo ln -s /mnt/etc/apache2 /etc/apache2
+
+    phpv="$PHP_VERSION"
+    sudo apt  -y  install php\$phpv libapache2-mod-php\$phpv && echo "php installed \$phpv"
+
+    sudo update-alternatives --set php /usr/bin/php\$phpv
+    sudo update-alternatives --set phar /usr/bin/phar\$phpv
+    sudo update-alternatives --set phar.phar /usr/bin/phar.phar\$phpv
+    sudo update-alternatives --set phpize /usr/bin/phpize\$phpv
+    sudo update-alternatives --set php-config /usr/bin/php-config\$phpv
+
+	sudo mv /etc/apache2 /etc/apache2.bak && sudo ln -s /data/etc/apache2 /etc/apache2
+	sudo wget https://dl.eff.org/certbot-auto && sudo chmod a+x certbot-auto
+	sudo mv certbot-auto /etc/letsencrypt/certbot-auto
+	gcloud auth login
+	gcloud compute instances list --filter="name~'$INSTANCE_GROUP_NAME_PRODUCTION'" --format="value(name)" |xargs -I '{}' gcloud compute ssh '{}' --zone='europe-west2-c' --command "sudo service apache2 restart"
+
+	sudo service apache2 stop
+EOF
+
+##setup crontab for root on fs vm
+ #45 2 * * 6 /data/hosting/SETUP_DOMAIN_FOLDER/cron-app/cron-job-runner/cerbot-renew-scheduler.sh
+
+
