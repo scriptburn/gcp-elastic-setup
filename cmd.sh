@@ -37,7 +37,29 @@ LOAD_BALANCER_HTTP_BACKEND="$SETUP_NAME-load-balancer-http-backend"
 TCP_LOAD_BALANCER_IPV4_NAME="$SETUP_NAME-tcp-lb-ipv4"
 TCP_LOAD_BALANCER_IPV6_NAME="$SETUP_NAME-tcp-lb-ipv6"
 
-IFS='' read -r -d '' VM_TEMPLATE_STARTUP_SCRIPT <<-EOF
+FS_SERVER_HOSTING_FOLDER="/mnt/hosting"
+PUBSUB_TOPIC="$SETUP_NAME-topic-cron"
+PUBSUB_SUBSCRIPTION="$SETUP_NAME-subscription-cron"
+SETUP_DOMAIN="scorpion.developmentpath.co.uk"
+PUBSUB_RECEIVER_URL="cron-app/pubsub"
+PUBSUB_PUSH_URL="https://$SETUP_DOMAIN/$PUBSUB_RECEIVER_URL/receive_message"
+
+
+
+IFS='' read -r -d '' PUBSUB_SETUP_CMD <<-EOF
+	mkdir -p $FS_SERVER_HOSTING_FOLDER/$SETUP_DOMAIN/$PUBSUB_RECEIVER_URL
+	cd  $FS_SERVER_HOSTING_FOLDER/$SETUP_DOMAIN/$PUBSUB_RECEIVER_URL
+
+	git clone https://github.com/scriptburn/pub-sub-target.git .
+	composer install
+
+	mkdir -p $FS_SERVER_HOSTING_FOLDER/$SETUP_DOMAIN/cron-app/cron-job-runner
+	cd $FS_SERVER_HOSTING_FOLDER/$SETUP_DOMAIN/cron-app/cron-job-runner
+	git clone https://github.com/scriptburn/cron-job-runner.git .
+	
+EOF
+
+ IFS='' read -r -d '' VM_TEMPLATE_STARTUP_SCRIPT <<-EOF
     export DEBIAN_FRONTEND=noninteractive
 
 
@@ -100,6 +122,10 @@ IFS='' read -r -d '' VM_TEMPLATE_STARTUP_SCRIPT <<-EOF
     sudo /usr/sbin/a2enmod headers
     sudo a2enmod dir
     sudo a2enmod authz_core
+
+	sudo mv /etc/letsencrypt /etc/letsencrypt.bak
+
+	sudo ln -s /mnt/etc/letsencrypt /etc/letsencrypt
 
     sudo service apache2 restart  && echo "apache started"
     sudo systemctl  start redis-server && echo "redis started"
@@ -451,9 +477,44 @@ gcloud beta compute forwarding-rules create $SETUP_NAME-tcp-lb-ipv6-forwarding-r
 --ports 443
 
 
+## create pub sub topic for cron
 
 
+gcloud pubsub topics create $PUBSUB_TOPIC \
+--project $SETUP_PROJECT_ID   
 
+
+## create an app engine cron app which will run every 1 min and push a message to $PUBSUB_TOPIC
+##git htdocs/github_projects/appengine-topic-push-cron or from https://github.com/scriptburn/appengine-topic-push-cron.git
+
+# grant Storage Object Viewer permission to  @cloudbuild.gserviceaccount.com role "Cloud Build Service Account" https://console.cloud.google.com/iam-admin/iam?project=scorpion-233719
+gcloud app deploy
+gcloud app deploy cron.yaml
+
+
+ 
+ 
+
+## create a domain on gcp and create ssl certificate sudo certbot --apache for it and host cron-app there, which will receive the message pushed by app engine cron 
+## to topic $PUBSUB_TOPIC and cron-app will exec the actual cron script on gcp
+#make sure json mod is enabled
+run $PUBSUB_SETUP_CMD
+
+## register pubsub scubscription url 
+
+#first add https url of domain https://$SETUP_DOMAIN in search console https://search.google.com/search-console
+# then add domain here https://console.cloud.google.com/apis/credentials/domainverification?project=scorpion-233719
+
+
+##create pubsub subcription for cron 
+
+gcloud pubsub subscriptions create $PUBSUB_SUBSCRIPTION \
+--project $SETUP_PROJECT_ID   \
+--topic $PUBSUB_TOPIC \
+--ack-deadline 10 \
+--push-endpoint $PUBSUB_PUSH_URL
+
+ 
 #################
 #setup zfs on vm
 sudo sed -i 's/main/main contrib non-free/g' /etc/apt/sources.list
@@ -510,3 +571,21 @@ sudo chgrp -R www-data /mnt/hosting
 sudo usermod -a -G www-data rajneeshojha123
 sudo chmod -R 2774 /mnt/hosting
 
+
+function template_for_image
+{
+		
+	sudo  apt -y install nfs-common && sudo mount -t nfs scorpion-fs-vm:/data /mnt && echo "drive mounted" 
+	sudo systemctl  start redis-server && echo "redis started"
+	sudo service apache2 start  && echo "apache started"
+	
+	sudo mv /etc/letsencrypt /etc/letsencrypt.bak
+	sudo ln -s /mnt/etc/letsencrypt /etc/letsencrypt
+
+	nohup /mnt/tools/cloud_sql_proxy -instances=scorpion-233719:europe-west2:scorpion-mysql-vm=tcp:3306 & 
+	echo "sql proxy started" 
+	echo "all done"
+}
+
+
+ 
